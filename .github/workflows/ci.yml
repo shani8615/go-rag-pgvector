@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+          POSTGRES_DB: rag
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag -d rag"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Check go.mod / go.sum are tidy
+        run: |
+          go mod tidy
+          if ! git diff --exit-code go.mod || ! git ls-files --error-unmatch go.sum >/dev/null 2>&1 || ! git diff --exit-code go.sum; then
+            echo "::error::go.mod/go.sum are not tidy. Expected contents:"
+            echo "----- go.mod -----"; cat go.mod
+            echo "----- go.sum -----"; cat go.sum
+            exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+      - name: Test (unit + pgvector integration)
+        env:
+          TEST_DATABASE_URL: postgres://rag:rag@localhost:5432/rag?sslmode=disable
+        run: go test -race -cover ./...
+      - name: Build
+        run: go build ./cmd/server
